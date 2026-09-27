@@ -4,16 +4,32 @@
  * in the browser. All data access runs as the authenticated user; RLS
  * owner policies apply.
  *
- * Config: SUPABASE_URL + SUPABASE_ANON_KEY come from web/config.js (local,
- * gitignored). web/config.example.js documents the placeholders.
+ * Config: SUPABASE_URL is baked in (not secret). SUPABASE_ANON_KEY comes
+ * from web/config.js (local dev, gitignored) or from the browser's
+ * localStorage, entered once on the live site's setup screen. The key never
+ * lives in the repo.
  *
  * v1 flow: queue -> needs_review -> ready_to_submit -> (Jayanth submits on
  * the ATS site) -> submitted. Nothing here auto-submits.
  */
 
-const CONFIG = (typeof window.DASHBOARD_CONFIG !== "undefined")
-  ? window.DASHBOARD_CONFIG
-  : null;
+const PROJECT_URL = "https://wbmihhwbtmongzjwsxdx.supabase.co";
+const LS_KEY = "aa_anon_key";
+
+function resolveConfig() {
+  const fromFile = (typeof window.DASHBOARD_CONFIG !== "undefined")
+    ? window.DASHBOARD_CONFIG : null;
+  const url = (fromFile && fromFile.SUPABASE_URL && fromFile.SUPABASE_URL.indexOf("xyzcompany") !== 0)
+    ? fromFile.SUPABASE_URL : PROJECT_URL;
+  let key = (fromFile && fromFile.SUPABASE_ANON_KEY && fromFile.SUPABASE_ANON_KEY.indexOf("PASTE_") !== 0)
+    ? fromFile.SUPABASE_ANON_KEY : null;
+  if (!key) {
+    try { key = localStorage.getItem(LS_KEY) || null; } catch (e) { key = null; }
+  }
+  return { url: url, key: key };
+}
+
+const CONFIG = resolveConfig();
 
 let sb = null;          // supabase client
 let candidateId = null; // Jayanth's candidates.id
@@ -495,14 +511,32 @@ function enterLogin() {
 }
 
 (function boot() {
-  if (!CONFIG || !CONFIG.SUPABASE_URL || !CONFIG.SUPABASE_ANON_KEY ||
-      CONFIG.SUPABASE_ANON_KEY.indexOf("PASTE_") === 0) {
-    $("#setup-note").classList.remove("hidden");
-    $("#setup-note").innerHTML = "<strong>Setup needed:</strong> copy web/config.example.js " +
-      "to web/config.js and fill in SUPABASE_URL and SUPABASE_ANON_KEY, then reload.";
+  if (!CONFIG.url || !CONFIG.key) {
+    const note = $("#setup-note");
+    note.classList.remove("hidden");
+    note.innerHTML =
+      "<strong>One-time setup:</strong> paste your Supabase <em>anon public</em> key " +
+      "(Supabase dashboard -> Project Settings -> API -> Project API keys). " +
+      "It is stored only in this browser's local storage, never in the repo.<br><br>" +
+      '<input id="setup-key" type="password" autocomplete="off" placeholder="anon public key" ' +
+      'style="width:min(420px,90%)">' +
+      ' <button id="setup-save" class="action primary">Save key</button>' +
+      '<p id="setup-err" class="error"></p>';
+    $("#setup-save").addEventListener("click", () => {
+      const v = $("#setup-key").value.trim();
+      if (v.length < 20) {
+        $("#setup-err").textContent = "That does not look like a Supabase anon key. Try again.";
+        return;
+      }
+      try { localStorage.setItem(LS_KEY, v); } catch (e) {
+        $("#setup-err").textContent = "Could not save to local storage: " + e.message;
+        return;
+      }
+      location.reload();
+    });
     return;
   }
-  sb = window.supabase.createClient(CONFIG.SUPABASE_URL, CONFIG.SUPABASE_ANON_KEY);
+  sb = window.supabase.createClient(CONFIG.url, CONFIG.key);
   sb.auth.onAuthStateChange((_event, session) => {
     if (session && session.user) enterApp(session.user);
     else enterLogin();

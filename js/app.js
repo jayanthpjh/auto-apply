@@ -49,6 +49,7 @@ let reviewItems = [];   // [{id, el}] for keyboard nav
 let kbIndex = -1;
 let matchById = {};     // last discovery load, for the match drawer
 let allMatches = [];    // unfiltered discovery matches
+let authUserId = null;  // supabase auth.users.id (RLS: pull_requests.requested_by)
 
 const $ = (sel) => document.querySelector(sel);
 const esc = (s) => String(s == null ? "" : s)
@@ -295,7 +296,7 @@ function renderMatchList() {
   if (!rows.length) {
     list.innerHTML = allMatches.length
       ? `<div class="kempty"><strong>No matches pass these filters</strong>Loosen the filters to see more.</div>`
-      : `<div class="kempty"><strong>No matches yet</strong>Run your first Apify pull to fill the pipeline with real postings.</div>`;
+      : `<div class="kempty"><strong>No matches yet</strong>Run your first Apify pull to fill the pipeline with real postings.<br><br><button class="btn primary" data-pull-jobs>Pull jobs now</button></div>`;
     return;
   }
   list.innerHTML = "";
@@ -374,7 +375,115 @@ async function loadDiscovery() {
     kpiCard("Pool spend today", pool ? money(pool.spent_usd) : "n/a", "all users");
 
   renderMatchList();
+  syncPullState();
 }
+
+// ---------- PULL JOBS: UI-triggered Apify sourcing ----------
+// The dashboard inserts a pull_requests row (RLS: requested_by = auth.uid()).
+// The pull_worker cron (service role) picks it up and runs the pull.
+const PULL_ACTOR_ID = "Dn2KJLnaNC5vFGkEw"; // fantastic-jobs/career-site-job-listing-feed
+const PULL_MAX_ITEMS = 150;
+const PULL_USD_PER_ITEM = 0.003;
+let pullTimer = null;
+
+async function latestPull() {
+  const { data, error } = await sb.from("pull_requests")
+    .select("id,status,progress,error,max_items,created_at")
+    .eq("requested_by", authUserId)
+    .order("created_at", { ascending: false })
+    .limit(1);
+  if (error) throw error;
+  return (data && data[0]) || null;
+}
+
+function renderPullStatus(p) {
+  const pill = $("#pull-status");
+  const btn = $("#pull-jobs");
+  const busy = p && (p.status === "queued" || p.status === "running");
+  btn.disabled = !!busy;
+  if (!p) { pill.className = "pill hidden"; pill.textContent = ""; return; }
+  const prog = p.progress || {};
+  if (p.status === "queued") {
+    pill.className = "pill queued"; pill.textContent = "Pull queued";
+  } else if (p.status === "running") {
+    const extra = prog.fetched != null ? ` · ${prog.fetched} fetched`
+      : (prog.new != null ? ` · ${prog.new} new` : "");
+    pill.className = "pill running"; pill.textContent = "Pull running" + extra;
+  } else if (p.status === "done") {
+    const r = prog.result || {};
+    pill.className = "pill submitted";
+    pill.textContent = `Last pull: ${r.new != null ? r.new : "—"} new`;
+  } else {
+    pill.className = "pill failed"; pill.textContent = "Pull failed";
+  }
+}
+
+function stopPullPolling() {
+  if (pullTimer) { clearInterval(pullTimer); pullTimer = null; }
+}
+
+function startPullPolling() {
+  stopPullPolling();
+  const tick = async () => {
+    let p = null;
+    try { p = await latestPull(); }
+    catch (e) { return; } // transient; keep polling
+    renderPullStatus(p);
+    if (p && (p.status === "done" || p.status === "failed")) {
+      stopPullPolling();
+      if (p.status === "done") {
+        const r = (p.progress || {}).result || {};
+        toast(`Pull done — ${r.new || 0} new postings, ${r.matched || 0} new matches`, "ok");
+        if (currentView === "discovery") loadDiscovery();
+      } else {
+        toast("Pull failed: " + (p.error || "unknown error"), "error");
+      }
+    }
+  };
+  tick();
+  pullTimer = setInterval(tick, 10000);
+}
+
+async function syncPullState() {
+  try {
+    const p = await latestPull();
+    renderPullStatus(p);
+    if (p && (p.status === "queued" || p.status === "running")) startPullPolling();
+    else stopPullPolling();
+  } catch (e) {
+    // pull_requests table not migrated yet: leave the button enabled;
+    // the insert will surface the real error.
+  }
+}
+
+async function requestPull() {
+  let p = null;
+  try { p = await latestPull(); } catch (e) { /* table may not exist yet */ }
+  if (p && (p.status === "queued" || p.status === "running")) {
+    toast("A pull is already queued or running", "info");
+    return;
+  }
+  const cap = `Up to ${PULL_MAX_ITEMS} listings, about $${(PULL_MAX_ITEMS * PULL_USD_PER_ITEM).toFixed(2)} max — counts toward your $5/month Apify budget.`;
+  if (!confirm("Pull fresh job listings from Apify?\n\n" + cap)) return;
+  const { error } = await sb.from("pull_requests").insert({
+    requested_by: authUserId,
+    actor_id: PULL_ACTOR_ID,
+    max_items: PULL_MAX_ITEMS,
+    actor_input: {},
+  });
+  if (error) {
+    toast("Could not start the pull: " + error.message, "error");
+    return;
+  }
+  toast("Pull queued — the worker picks it up within ~15 minutes", "ok");
+  startPullPolling();
+}
+
+document.addEventListener("click", (e) => {
+  if (e.target && e.target.closest && e.target.closest("#pull-jobs,[data-pull-jobs]")) {
+    requestPull();
+  }
+});
 
 function openMatchDrawer(m) {
   const p = m.postings || {};
@@ -1059,6 +1168,7 @@ async function loadIdentity() {
 }
 
 async function enterApp(user) {
+  authUserId = user.id;
   $("#auth-view").classList.add("hidden");
   $("#shell").classList.remove("hidden");
   $("#auth-user").textContent = user.email || "";

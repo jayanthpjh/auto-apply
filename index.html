@@ -3,94 +3,140 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>auto-apply dashboard</title>
+<title>auto-apply — pipeline</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="css/style.css">
 </head>
 <body>
-<header>
-  <div class="header-row">
-    <h1>auto-apply</h1>
-    <div id="auth-area">
-      <span id="auth-user"></span>
-      <button id="auth-signout" class="navbtn hidden">Sign out</button>
-    </div>
+
+<!-- shown before sign-in -->
+<section id="auth-view">
+  <div class="auth-card">
+    <div class="brand big"><span class="brand-mark">a/</span><span class="brand-name">auto-apply</span></div>
+    <h2>Sign in</h2>
+    <p class="hint">Sign in with your Supabase account. The session is stored in this browser only.</p>
+    <label>Email<input id="auth-email" type="email" autocomplete="username"></label>
+    <label>Password<input id="auth-password" type="password" autocomplete="current-password"></label>
+    <button id="auth-signin" class="btn primary block">Sign in</button>
+    <p id="auth-error" class="error"></p>
+    <div id="setup-note" class="hint hidden"></div>
   </div>
-  <nav id="tabs" class="hidden">
-    <button data-view="queue" class="active">Queue</button>
-    <button data-view="review">Review <span id="review-count" class="badge"></span></button>
-    <button data-view="tracker">Tracker</button>
-    <button data-view="costs">Costs</button>
-  </nav>
-</header>
+</section>
 
-<main>
-  <!-- shown before sign-in -->
-  <section id="auth-view">
-    <div class="auth-box">
-      <h2>Sign in</h2>
-      <p class="hint">Sign in with your Supabase account. The session is stored in this browser only.</p>
-      <label>Email<br><input id="auth-email" type="email" autocomplete="username"></label><br><br>
-      <label>Password<br><input id="auth-password" type="password" autocomplete="current-password"></label><br><br>
-      <button id="auth-signin" class="action primary">Sign in</button>
-      <p id="auth-error" class="error"></p>
-      <p id="setup-note" class="hint hidden"></p>
+<!-- shown after sign-in -->
+<div id="shell" class="hidden">
+  <aside id="sidebar">
+    <div class="brand"><span class="brand-mark">a/</span><span class="brand-name">auto-apply</span></div>
+    <nav id="tabs">
+      <button data-view="pipeline" class="active">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2 2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>
+        Pipeline
+      </button>
+      <button data-view="review">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M8 12l3 3 5-6"/></svg>
+        Review <span id="review-count" class="badge"></span>
+      </button>
+      <button data-view="tracker">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 6h13M8 12h13M8 18h13"/><circle cx="4" cy="6" r="1" fill="currentColor"/><circle cx="4" cy="12" r="1" fill="currentColor"/><circle cx="4" cy="18" r="1" fill="currentColor"/></svg>
+        Tracker
+      </button>
+      <button data-view="costs">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="6" y1="20" x2="6" y2="14"/><line x1="12" y1="20" x2="12" y2="8"/><line x1="18" y1="20" x2="18" y2="12"/><line x1="3" y1="20" x2="21" y2="20"/></svg>
+        Costs
+      </button>
+    </nav>
+    <div id="auth-area">
+      <span id="auth-user" title="Signed in"></span>
+      <button id="auth-signout" class="btn ghost">Sign out</button>
     </div>
-  </section>
+  </aside>
 
-  <!-- shown after sign-in -->
-  <section id="app-view" class="hidden">
-    <section id="view-queue" class="view active">
-      <h2>Queue</h2>
-      <p class="hint">Scored matches against your profile. Preparing an application creates it in
-      status <strong>queued</strong> - nothing submits without your review and approval.</p>
-      <table id="queue-table"><thead><tr>
-        <th>Score</th><th>Company</th><th>Title</th><th>Location</th><th>ATS</th><th>Seen</th><th></th>
-      </tr></thead><tbody></tbody></table>
+  <main>
+    <section id="view-pipeline" class="view active">
+      <div class="view-head">
+        <div>
+          <h2>Pipeline</h2>
+          <p class="hint">Find &rarr; Prep &rarr; Apply &rarr; Track. Nothing submits without your review and approval.</p>
+        </div>
+      </div>
+      <div id="kpi-row" class="kpis"></div>
+      <div id="kanban" class="kanban"></div>
     </section>
 
     <section id="view-review" class="view">
-      <h2>Review</h2>
-      <p class="hint">Nothing submits without your approval. Approve moves the application to
-      <strong>ready_to_submit</strong> (you submit on the ATS site yourself); Reject closes it.</p>
+      <div class="view-head">
+        <div>
+          <h2>Review</h2>
+          <p class="hint">Approve moves the application to <strong>ready_to_submit</strong> (you submit on the ATS site yourself); Reject closes it.</p>
+        </div>
+        <div class="review-tools">
+          <div class="kbd-hints" title="Keyboard shortcuts">
+            <span><kbd>j</kbd><kbd>k</kbd> move</span>
+            <span><kbd>a</kbd> approve</span>
+            <span><kbd>r</kbd> reject</span>
+          </div>
+          <button id="approve-all" class="btn primary">Approve all</button>
+        </div>
+      </div>
       <div id="review-list"></div>
     </section>
 
     <section id="view-tracker" class="view">
-      <h2>Tracker</h2>
-      <p class="hint">Every application and its current status. Open a detail for the receipt,
-      tailored resume, recruiter mail, and the full event timeline.</p>
-      <div id="tracker-filters"></div>
+      <div class="view-head">
+        <div>
+          <h2>Tracker</h2>
+          <p class="hint">Every application and its current status. Open a detail for the receipt, tailored resume, recruiter mail, and the full event timeline.</p>
+        </div>
+      </div>
+      <div id="tracker-filters" class="chips"></div>
+      <div class="table-wrap">
       <table id="tracker-table"><thead><tr>
-        <th>Company</th><th>Title</th><th>Status</th><th>Updated</th><th></th>
+        <th>Company</th><th>Title</th><th>Status</th><th>Reply</th><th>Updated</th><th></th>
       </tr></thead><tbody></tbody></table>
+      </div>
     </section>
 
     <section id="view-costs" class="view">
-      <h2>Costs</h2>
-      <p class="hint">Pool burn-down and your spend, from cost_ledger and the pool_spend_today view.</p>
-      <div id="cost-cards" class="cards"></div>
+      <div class="view-head">
+        <div>
+          <h2>Costs</h2>
+          <p class="hint">Pool burn-down and your spend, from cost_ledger and the pool_spend_today view.</p>
+        </div>
+      </div>
+      <div id="cost-cards" class="kpis"></div>
       <h3>Burn-down</h3>
       <div id="burn-panel"></div>
       <h3>Spend by kind</h3>
+      <div class="table-wrap">
       <table id="costs-table"><thead><tr>
         <th>Kind</th><th>Calls</th><th>USD</th>
       </tr></thead><tbody></tbody></table>
+      </div>
       <h3>Recent ledger</h3>
+      <div class="table-wrap">
       <table id="ledger-table"><thead><tr>
         <th>When</th><th>Kind</th><th>USD</th><th>Detail</th>
       </tr></thead><tbody></tbody></table>
+      </div>
       <h3>Database and storage</h3>
       <div id="infra-panel"></div>
     </section>
-  </section>
-</main>
-
-<div id="detail-modal" class="modal hidden">
-  <div class="modal-body">
-    <button id="modal-close">close</button>
-    <div id="modal-content"></div>
-  </div>
+  </main>
 </div>
+
+<!-- slide-over detail drawer -->
+<div id="scrim" class="hidden"></div>
+<aside id="drawer" aria-label="Application detail">
+  <div class="drawer-head">
+    <span class="drawer-title">Application detail</span>
+    <button id="drawer-close" class="btn ghost" aria-label="Close">✕</button>
+  </div>
+  <div id="drawer-content"></div>
+</aside>
+
+<div id="toasts" aria-live="polite"></div>
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="config.js"></script>

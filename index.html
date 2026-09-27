@@ -1,0 +1,99 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>auto-apply dashboard</title>
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+<header>
+  <div class="header-row">
+    <h1>auto-apply</h1>
+    <div id="auth-area">
+      <span id="auth-user"></span>
+      <button id="auth-signout" class="navbtn hidden">Sign out</button>
+    </div>
+  </div>
+  <nav id="tabs" class="hidden">
+    <button data-view="queue" class="active">Queue</button>
+    <button data-view="review">Review <span id="review-count" class="badge"></span></button>
+    <button data-view="tracker">Tracker</button>
+    <button data-view="costs">Costs</button>
+  </nav>
+</header>
+
+<main>
+  <!-- shown before sign-in -->
+  <section id="auth-view">
+    <div class="auth-box">
+      <h2>Sign in</h2>
+      <p class="hint">Sign in with your Supabase account. The session is stored in this browser only.</p>
+      <label>Email<br><input id="auth-email" type="email" autocomplete="username"></label><br><br>
+      <label>Password<br><input id="auth-password" type="password" autocomplete="current-password"></label><br><br>
+      <button id="auth-signin" class="action primary">Sign in</button>
+      <p id="auth-error" class="error"></p>
+      <p id="setup-note" class="hint hidden"></p>
+    </div>
+  </section>
+
+  <!-- shown after sign-in -->
+  <section id="app-view" class="hidden">
+    <section id="view-queue" class="view active">
+      <h2>Queue</h2>
+      <p class="hint">Scored matches against your profile. Preparing an application creates it in
+      status <strong>queued</strong> - nothing submits without your review and approval.</p>
+      <table id="queue-table"><thead><tr>
+        <th>Score</th><th>Company</th><th>Title</th><th>Location</th><th>ATS</th><th>Seen</th><th></th>
+      </tr></thead><tbody></tbody></table>
+    </section>
+
+    <section id="view-review" class="view">
+      <h2>Review</h2>
+      <p class="hint">Nothing submits without your approval. Approve moves the application to
+      <strong>ready_to_submit</strong> (you submit on the ATS site yourself); Reject closes it.</p>
+      <div id="review-list"></div>
+    </section>
+
+    <section id="view-tracker" class="view">
+      <h2>Tracker</h2>
+      <p class="hint">Every application and its current status. Open a detail for the receipt,
+      tailored resume, recruiter mail, and the full event timeline.</p>
+      <div id="tracker-filters"></div>
+      <table id="tracker-table"><thead><tr>
+        <th>Company</th><th>Title</th><th>Status</th><th>Updated</th><th></th>
+      </tr></thead><tbody></tbody></table>
+    </section>
+
+    <section id="view-costs" class="view">
+      <h2>Costs</h2>
+      <p class="hint">Pool burn-down and your spend, from cost_ledger and the pool_spend_today view.</p>
+      <div id="cost-cards" class="cards"></div>
+      <h3>Burn-down</h3>
+      <div id="burn-panel"></div>
+      <h3>Spend by kind</h3>
+      <table id="costs-table"><thead><tr>
+        <th>Kind</th><th>Calls</th><th>USD</th>
+      </tr></thead><tbody></tbody></table>
+      <h3>Recent ledger</h3>
+      <table id="ledger-table"><thead><tr>
+        <th>When</th><th>Kind</th><th>USD</th><th>Detail</th>
+      </tr></thead><tbody></tbody></table>
+      <h3>Database and storage</h3>
+      <div id="infra-panel"></div>
+    </section>
+  </section>
+</main>
+
+<div id="detail-modal" class="modal hidden">
+  <div class="modal-body">
+    <button id="modal-close">close</button>
+    <div id="modal-content"></div>
+  </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="config.js"></script>
+<script src="js/app.js"></script>
+</body>
+</html>

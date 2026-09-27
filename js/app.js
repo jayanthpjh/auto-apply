@@ -1,5 +1,11 @@
 /* auto-apply dashboard (GitHub Pages, static, no build step).
  *
+ * Tsenta-style surfaces, our backend:
+ *   Discovery = match feed (find)      Prep = per-role tailoring (prep)
+ *   Review    = approve/reject gate    Apply = ready-to-submit (apply)
+ *   Track     = application board      Activity = event feed
+ *   Costs     = pool spend
+ *
  * Auth: Supabase email/password via supabase-js v2 (CDN). Session persists
  * in the browser. All data access runs as the authenticated user; RLS
  * owner policies apply.
@@ -9,8 +15,9 @@
  * localStorage, entered once on the live site's setup screen. The key never
  * lives in the repo.
  *
- * v1 flow: pipeline (matched -> preparing -> review -> ready) ->
- * (Jayanth submits on the ATS site) -> submitted. Nothing here auto-submits.
+ * v1 flow: discovery -> prep -> review -> ready_to_submit ->
+ * (Jayanth submits on the ATS site himself) -> submitted. Nothing here
+ * auto-submits, ever.
  *
  * UX: keyboard-first review (j/k move, a approve, r reject), slide-over
  * detail drawer, optimistic actions with toasts, batch approve.
@@ -35,13 +42,13 @@ function resolveConfig() {
 const CONFIG = resolveConfig();
 
 let sb = null;          // supabase client
-let candidateId = null; // Jayanth's candidates.id
-let profileId = null;   // his default profiles.id
-let trackerFilter = "all";
-let currentView = "pipeline";
+let candidateId = null; // candidates.id
+let profileId = null;   // default profiles.id
+let currentView = "discovery";
 let reviewItems = [];   // [{id, el}] for keyboard nav
 let kbIndex = -1;
-let matchById = {};     // last pipeline load, for the match drawer
+let matchById = {};     // last discovery load, for the match drawer
+let allMatches = [];    // unfiltered discovery matches
 
 const $ = (sel) => document.querySelector(sel);
 const esc = (s) => String(s == null ? "" : s)
@@ -163,7 +170,47 @@ function whyHTML(reasons, open) {
     `<details class="why"${open ? " open" : ""}><summary>Why this match</summary><ul>${bullets}</ul></details>`;
 }
 
-// ---------- recruiter replies (shared by pipeline + tracker) ----------
+// ---------- tailoring package renderers (review_json) ----------
+function renderDiff(r) {
+  const diff = r.diff;
+  if (!diff || !diff.length) return "";
+  const blocks = diff.map((d) => {
+    if (typeof d === "string") return `<div class="diff-new">${esc(d)}</div>`;
+    const section = d.section ? `<div class="diff-section">${esc(d.section)}</div>` : "";
+    return section +
+      (d.old ? `<div class="diff-old">${esc(d.old)}</div>` : "") +
+      (d.new ? `<div class="diff-new">${esc(d.new)}</div>` : "");
+  }).join("");
+  return `<div class="diff-block">${blocks}</div>`;
+}
+
+function renderCoverLetter(r, ref) {
+  if (r.cover_letter) return `<pre class="cover">${esc(String(r.cover_letter))}</pre>`;
+  if (ref) return `<p>${refLink(ref)}</p>`;
+  return "";
+}
+
+function renderAnswers(r) {
+  const answers = r.filled_answers || r.answers;
+  if (!answers || !Object.keys(answers).length) return "";
+  return `<table class="answers"><tbody>` +
+    Object.entries(answers).map(([k, v]) =>
+      `<tr><td class="ans-key">${esc(k)}</td><td>${esc(String(v))}</td></tr>`).join("") +
+    `</tbody></table>`;
+}
+
+function renderUnanswered(r) {
+  const qs = r.unanswered_questions || r.unanswerable_questions;
+  if (!qs || !qs.length) return "";
+  return qs.map((q) => {
+    const label = typeof q === "string" ? q : q.label;
+    const opts = (q && q.options && q.options.length)
+      ? `<br>Options: ${esc(q.options.join(" | "))}` : "";
+    return `<div class="unanswered"><strong>${esc(label)}</strong>${opts}</div>`;
+  }).join("");
+}
+
+// ---------- recruiter replies ----------
 async function loadReplyMap(appIds) {
   const map = {};        // appId -> latest meaningful classification
   const responded = new Set(); // appIds with a real employer reply
@@ -198,21 +245,14 @@ $("#tabs").addEventListener("click", async (e) => {
 });
 
 async function loadView(view) {
-  if (view === "pipeline") return loadPipeline();
+  if (view === "discovery") return loadDiscovery();
+  if (view === "prep") return loadPrep();
   if (view === "review") return loadReview();
-  if (view === "tracker") return loadTracker();
+  if (view === "apply") return loadApply();
+  if (view === "track") return loadTrack();
+  if (view === "activity") return loadActivity();
   if (view === "costs") return loadCosts();
 }
-
-// ---------- pipeline (kanban) ----------
-const KCOLS = [
-  { key: "matched", label: "Matched", empty: ["No new matches", "Run your first Apify pull to fill the pipeline."] },
-  { key: "preparing", label: "Preparing", statuses: ["queued", "running"], empty: ["Nothing preparing", "Prepared applications land here."] },
-  { key: "review", label: "Needs review", statuses: ["needs_review"], empty: ["Nothing to review", "Tailored applications wait for your approval here."] },
-  { key: "ready", label: "Ready", statuses: ["ready_to_submit", "manual", "needs_otp"], empty: ["Nothing ready", "Approved applications wait for your manual submit."] },
-  { key: "submitted", label: "Submitted", statuses: ["submitted"], empty: ["No submissions yet", "Mark applications submitted after you apply on the ATS site."] },
-  { key: "closed", label: "Closed", statuses: ["failed"], empty: ["Nothing closed", "Rejected or failed applications land here."] },
-];
 
 function kpiCard(label, value, sub, accent) {
   return `<div class="kpi${accent ? " accent" : ""}"><div class="kpi-label">${esc(label)}</div>` +
@@ -220,54 +260,89 @@ function kpiCard(label, value, sub, accent) {
     (sub ? `<div class="kpi-sub">${esc(sub)}</div>` : "") + `</div>`;
 }
 
+// ---------- DISCOVERY (find): match feed ----------
 function matchCard(m) {
   const p = m.postings || {};
+  const posted = p.first_seen_at ? rel(p.first_seen_at) : "";
   return `<div class="kcard" data-match-id="${m.id}">` +
     `<div class="kcard-top"><span class="kcard-company">${esc(p.company || "")}</span>${atsBadge(p.ats_type)}</div>` +
     `<p class="kcard-title">${esc(p.title || "")}</p>` +
-    `<div class="kcard-loc">${esc(p.location || "")}</div>` +
+    `<div class="kcard-loc">${esc(p.location || "")}${posted ? ` · posted ${esc(posted)}` : ""}</div>` +
     scoreHTML(m.score) +
-    `<div class="kcard-meta"><span class="kcard-age">${esc(rel(m.created_at))}</span></div>` +
     whyHTML(m.reasons_json, false) +
-    `<div class="kcard-actions"><button class="btn primary" data-prepare="${m.id}">Prepare</button></div>` +
+    `<div class="kcard-actions"><button class="btn" data-jd="${m.id}">Description</button>` +
+    `<button class="btn primary" data-prepare="${m.id}">Prepare application</button></div>` +
     `</div>`;
 }
 
-function appCard(a, replyByApp) {
-  const p = a.postings || {};
-  const reply = replyByApp[a.id];
-  const canMark = (a.status === "ready_to_submit" || a.status === "manual");
-  return `<div class="kcard" data-app-id="${a.id}">` +
-    `<div class="kcard-top"><span class="kcard-company">${esc(p.company || "")}</span>${atsBadge(a.ats)}</div>` +
-    `<p class="kcard-title">${esc(p.title || "")}</p>` +
-    `<div class="kcard-loc">${esc(p.location || "")}</div>` +
-    `<div class="kcard-meta">${statusPill(a.status)}${reply ? replyChip(reply) : ""}<span class="kcard-age">${esc(rel(a.updated_at))}</span></div>` +
-    (canMark ? `<div class="kcard-actions"><button class="btn primary" data-mark-submitted="${a.id}">Mark submitted</button></div>` : "") +
-    `</div>`;
+function filteredMatches() {
+  const minScore = Number($("#f-minscore").value) / 100;
+  const locQ = $("#f-location").value.trim().toLowerCase();
+  const remoteOnly = $("#f-remote").checked;
+  return allMatches.filter((m) => {
+    if (Number(m.score || 0) < minScore) return false;
+    const loc = String((m.postings || {}).location || "").toLowerCase();
+    if (locQ && loc.indexOf(locQ) === -1) return false;
+    if (remoteOnly && loc.indexOf("remote") === -1) return false;
+    return true;
+  });
 }
 
-async function loadPipeline() {
-  const kanban = $("#kanban");
+function renderMatchList() {
+  const list = $("#match-list");
+  const rows = filteredMatches();
+  $("#f-count").textContent = `${rows.length} of ${allMatches.length} matches`;
+  if (!rows.length) {
+    list.innerHTML = allMatches.length
+      ? `<div class="kempty"><strong>No matches pass these filters</strong>Loosen the filters to see more.</div>`
+      : `<div class="kempty"><strong>No matches yet</strong>Run your first Apify pull to fill the pipeline with real postings.</div>`;
+    return;
+  }
+  list.innerHTML = "";
+  rows.forEach((m) => {
+    const wrap = document.createElement("div");
+    wrap.innerHTML = matchCard(m);
+    list.appendChild(wrap.firstChild);
+  });
+}
+
+["f-minscore", "f-location", "f-remote"].forEach((id) => {
+  document.addEventListener("input", (e) => {
+    if (e.target && e.target.id === id) {
+      if (id === "f-minscore") $("#f-minscore-val").textContent = e.target.value + "%";
+      if (currentView === "discovery") renderMatchList();
+    }
+  });
+  document.addEventListener("change", (e) => {
+    if (e.target && e.target.id === id && currentView === "discovery") renderMatchList();
+  });
+});
+
+function updateReviewBadge(n) {
+  $("#review-count").textContent = n || "";
+}
+
+async function loadDiscovery() {
+  const list = $("#match-list");
   const kpis = $("#kpi-row");
-  kanban.innerHTML = `<p class="hint">Loading pipeline…</p>`;
+  list.innerHTML = `<p class="hint">Loading matches…</p>`;
   kpis.innerHTML = "";
 
   const { data: matches, error: merr } = await sb.from("matches")
-    .select("id,score,reasons_json,created_at,posting_id,postings(company,title,location,url,ats_type)")
+    .select("id,score,reasons_json,created_at,posting_id,postings(company,title,location,url,ats_type,description_raw,first_seen_at)")
     .eq("profile_id", profileId)
     .order("score", { ascending: false })
-    .limit(100);
+    .limit(200);
   if (merr) {
-    kanban.innerHTML = `<p class="hint">Could not load matches: ${esc(merr.message)}</p>`;
+    list.innerHTML = `<p class="hint">Could not load matches: ${esc(merr.message)}</p>`;
     return;
   }
   const { data: apps, error: aerr } = await sb.from("applications")
-    .select("id,url,ats,status,receipt_json,tailored_resume_ref,updated_at,postings(company,title,location)")
+    .select("id,url,status,updated_at")
     .eq("candidate_id", candidateId)
-    .order("updated_at", { ascending: false })
-    .limit(500);
+    .limit(2000);
   if (aerr) {
-    kanban.innerHTML = `<p class="hint">Could not load applications: ${esc(aerr.message)}</p>`;
+    list.innerHTML = `<p class="hint">Could not load applications: ${esc(aerr.message)}</p>`;
     return;
   }
 
@@ -275,138 +350,177 @@ async function loadPipeline() {
   const byUrl = {};
   rows.forEach((a) => { byUrl[a.url] = a.status; });
   matchById = {};
-  (matches || []).forEach((m) => { matchById[m.id] = m; });
+  allMatches = (matches || []).filter((m) => !byUrl[(m.postings || {}).url]);
+  allMatches.forEach((m) => { matchById[m.id] = m; });
 
   const { data: poolRows } = await sb.from("pool_spend_today").select("*");
   const pool = (poolRows && poolRows[0]) || null;
-  const { map: replyByApp, responded } = await loadReplyMap(rows.map((a) => a.id));
+  const { responded } = await loadReplyMap(rows.map((a) => a.id));
 
-  const newMatches = (matches || []).filter((m) => !byUrl[(m.postings || {}).url]);
   const count = (s) => rows.filter((a) => a.status === s).length;
   const submittedCount = count("submitted");
   const replyRate = submittedCount
     ? Math.round((responded.size / submittedCount) * 100) + "%"
     : "—";
+  const needsReview = count("needs_review");
+  updateReviewBadge(needsReview);
 
   kpis.innerHTML =
-    kpiCard("New matches", String(newMatches.length), "awaiting prep", true) +
-    kpiCard("Awaiting review", String(count("needs_review")), "triage with j / k") +
+    kpiCard("New matches", String(allMatches.length), "awaiting prep", true) +
+    kpiCard("Awaiting review", String(needsReview), "triage with j / k") +
     kpiCard("Ready to submit", String(count("ready_to_submit")), "you submit on the ATS") +
     kpiCard("Submitted", String(submittedCount), "marked submitted") +
     kpiCard("Reply rate", replyRate, `${responded.size} replies · ${submittedCount} submitted`) +
     kpiCard("Pool spend today", pool ? money(pool.spent_usd) : "n/a", "all users");
 
-  const inCol = (a, col) => col.statuses && col.statuses.indexOf(a.status) !== -1;
-  kanban.innerHTML = KCOLS.map((col) => {
-    let cards = "";
-    if (col.key === "matched") {
-      cards = newMatches.map(matchCard).join("");
-    } else {
-      cards = rows.filter((a) => inCol(a, col)).map((a) => appCard(a, replyByApp)).join("");
-    }
-    const n = col.key === "matched"
-      ? newMatches.length
-      : rows.filter((a) => inCol(a, col)).length;
-    if (!cards) {
-      cards = `<div class="kempty"><strong>${esc(col.empty[0])}</strong>${esc(col.empty[1])}</div>`;
-    }
-    return `<div class="kcol"><div class="kcol-head"><span>${esc(col.label)}</span>` +
-      `<span class="kcol-count">${n}</span></div><div class="kcol-body">${cards}</div></div>`;
-  }).join("");
+  renderMatchList();
+}
+
+function openMatchDrawer(m) {
+  const p = m.postings || {};
+  const posted = p.first_seen_at ? rel(p.first_seen_at) : "";
+  showDrawer(
+    `<h3>${esc(p.company || "")} — ${esc(p.title || "")}</h3>` +
+    `<p class="hint">${esc(p.location || "")}${posted ? ` · posted ${esc(posted)}` : ""}</p>` +
+    `<div class="kcard-meta">${atsBadge(p.ats_type)}</div>` +
+    scoreHTML(m.score) +
+    whyHTML(m.reasons_json, true) +
+    `<h4>Job description</h4>` +
+    (p.description_raw
+      ? `<div class="jd">${esc(p.description_raw)}</div>`
+      : `<p class="hint">No description stored for this posting.</p>`) +
+    `<p style="margin-top:14px"><a href="${esc(p.url)}" target="_blank" rel="noopener">Open posting</a></p>` +
+    `<button class="btn primary block" data-prepare="${m.id}">Prepare application</button>`
+  );
 }
 
 // prepare (from a match card or the match drawer)
 document.addEventListener("click", async (e) => {
   const prep = e.target.dataset && e.target.dataset.prepare;
-  if (!prep) return;
-  const btn = e.target;
-  btn.disabled = true;
-  const orig = btn.textContent;
-  btn.textContent = "Preparing…";
-  try {
-    const { data: m, error: merr } = await sb.from("matches")
-      .select("posting_id,postings(url)")
-      .eq("id", prep).single();
-    if (merr) throw merr;
-    const url = (m.postings || {}).url;
-    if (!url) throw new Error("match has no posting url");
-    const { data: app, error } = await sb.from("applications").insert({
-      candidate_id: candidateId,
-      profile_id: profileId,
-      posting_id: m.posting_id,
-      url: url,
-      status: "queued",
-    }).select("id").single();
-    if (error) {
-      if (error.code === "23505") {
-        // unique(candidate_id, url) guard fired: another row already exists.
-        toast("Already in your pipeline", "info");
-        closeDrawer();
-        loadPipeline();
-        return;
+  if (prep) {
+    const btn = e.target;
+    btn.disabled = true;
+    const orig = btn.textContent;
+    btn.textContent = "Preparing…";
+    try {
+      const { data: m, error: merr } = await sb.from("matches")
+        .select("posting_id,postings(url)")
+        .eq("id", prep).single();
+      if (merr) throw merr;
+      const url = (m.postings || {}).url;
+      if (!url) throw new Error("match has no posting url");
+      const { data: app, error } = await sb.from("applications").insert({
+        candidate_id: candidateId,
+        profile_id: profileId,
+        posting_id: m.posting_id,
+        url: url,
+        status: "queued",
+      }).select("id").single();
+      if (error) {
+        if (error.code === "23505") {
+          // unique(candidate_id, url) guard fired: another row already exists.
+          toast("Already in your pipeline", "info");
+          closeDrawer();
+          loadView(currentView);
+          return;
+        }
+        throw error;
       }
-      throw error;
+      await logEvent(app.id, "note", { note: "prepared from discovery by Jayanth" });
+      toast("Application queued — see Prep", "ok");
+      closeDrawer();
+      loadView(currentView);
+    } catch (err) {
+      btn.disabled = false;
+      btn.textContent = orig;
+      toast("Could not prepare the application: " + err.message, "error");
     }
-    await logEvent(app.id, "note", { note: "prepared from pipeline by Jayanth" });
-    toast("Application queued — see the Preparing column", "ok");
-    closeDrawer();
-    if (currentView === "pipeline") loadPipeline();
-  } catch (err) {
-    btn.disabled = false;
-    btn.textContent = orig;
-    toast("Could not prepare the application: " + err.message, "error");
+    return;
   }
+  const jd = e.target.dataset && e.target.dataset.jd;
+  if (jd && matchById[jd]) { openMatchDrawer(matchById[jd]); return; }
 });
 
-// ---------- review ----------
-function renderDiff(r) {
-  const diff = r.diff;
-  if (!diff || !diff.length) return "";
-  const blocks = diff.map((d) => {
-    if (typeof d === "string") return `<div class="diff-new">${esc(d)}</div>`;
-    const section = d.section ? `<div class="diff-section">${esc(d.section)}</div>` : "";
-    return section +
-      (d.old ? `<div class="diff-old">${esc(d.old)}</div>` : "") +
-      (d.new ? `<div class="diff-new">${esc(d.new)}</div>` : "");
-  }).join("");
-  return `<h4>What changed vs your base resume</h4>${blocks}`;
+// ---------- PREP: per-role tailoring, step by step ----------
+function prepStepsHTML(app) {
+  const r = app.review_json || {};
+  const diff = renderDiff(r);
+  const cover = renderCoverLetter(r, app.cover_letter_ref);
+  const answers = renderAnswers(r);
+  const unanswered = renderUnanswered(r);
+  const hasPackage = diff || cover || answers || unanswered ||
+    app.tailored_resume_ref || app.cover_letter_ref;
+  const step = (title, body, emptyText) =>
+    `<li><div class="step-title">${esc(title)}</div>` +
+    (body || `<div class="step-empty">${esc(emptyText)}</div>`) + `</li>`;
+  return `<ol class="steps">` +
+    step("Resume diff — what changed vs your base resume",
+      diff || (app.tailored_resume_ref ? `<p>${refLink(app.tailored_resume_ref)}</p>` : ""),
+      hasPackage ? "No resume changes recorded." : "Tailoring hasn't run yet — the pipeline picks this up automatically.") +
+    step("Cover letter", cover,
+      hasPackage ? "No cover letter for this role." : "Tailoring hasn't run yet — the pipeline picks this up automatically.") +
+    step("Exact answers that will be used", answers,
+      hasPackage ? "No open-ended answers recorded." : "Tailoring hasn't run yet — the pipeline picks this up automatically.") +
+    step("Open questions needing you",
+      unanswered,
+      hasPackage ? "None — every question was answerable from your profile." : "Tailoring hasn't run yet — the pipeline picks this up automatically.") +
+    `</ol>`;
 }
 
-function renderAnswers(r) {
-  const answers = r.filled_answers || r.answers;
-  if (!answers || !Object.keys(answers).length) return "";
-  return `<h4>Exact answers that will be used</h4><table class="answers"><tbody>` +
-    Object.entries(answers).map(([k, v]) =>
-      `<tr><td class="ans-key">${esc(k)}</td><td>${esc(String(v))}</td></tr>`).join("") +
-    `</tbody></table>`;
+async function loadPrep() {
+  const list = $("#prep-list");
+  list.innerHTML = `<p class="hint">Loading prep queue…</p>`;
+  const { data: rows, error } = await sb.from("applications")
+    .select("id,url,ats,status,review_json,tailored_resume_ref,cover_letter_ref,created_at,postings(company,title,location)")
+    .eq("candidate_id", candidateId)
+    .in("status", ["queued", "running", "needs_review"])
+    .order("created_at", { ascending: false })
+    .limit(200);
+  if (error) {
+    list.innerHTML = `<p class="hint">Could not load prep queue: ${esc(error.message)}</p>`;
+    return;
+  }
+  if (!rows || !rows.length) {
+    list.innerHTML = `<div class="kempty"><strong>Nothing in prep</strong>Prepare a match from Discovery and its tailored package will appear here.</div>`;
+    return;
+  }
+  list.innerHTML = "";
+  rows.forEach((app) => {
+    const p = app.postings || {};
+    const card = document.createElement("div");
+    card.className = "prep-card";
+    card.innerHTML =
+      `<h3>${esc(p.title || "")} <small>${esc(p.company || "")}</small></h3>` +
+      `<div class="kcard-meta">${statusPill(app.status)}${atsBadge(app.ats)}` +
+      `<span class="kcard-age">${esc(rel(app.created_at))}</span></div>` +
+      prepStepsHTML(app) +
+      (app.status === "needs_review"
+        ? `<p style="margin-top:10px"><button class="btn primary" data-goto-review="${app.id}">Open in Review</button></p>`
+        : `<p class="hint" style="margin-top:10px">Still tailoring — it moves to Review automatically when the package is ready.</p>`) +
+      `<p><a href="${esc(app.url)}" target="_blank" rel="noopener">Open posting</a></p>`;
+    list.appendChild(card);
+  });
 }
 
-function renderUnanswered(r) {
-  const qs = r.unanswered_questions || r.unanswerable_questions;
-  if (!qs || !qs.length) return "";
-  return `<h4>Needs your answer (the worker refused to guess)</h4>` +
-    qs.map((q) => {
-      const label = typeof q === "string" ? q : q.label;
-      const opts = (q && q.options && q.options.length)
-        ? `<br>Options: ${esc(q.options.join(" | "))}` : "";
-      return `<div class="unanswered"><strong>${esc(label)}</strong>${opts}</div>`;
-    }).join("");
-}
+document.addEventListener("click", (e) => {
+  const g = e.target.dataset && e.target.dataset.gotoReview;
+  if (!g) return;
+  document.querySelector('#tabs button[data-view="review"]').click();
+});
 
-function updateReviewBadge(n) {
-  $("#review-count").textContent = n || "";
-}
-
+// ---------- REVIEW: approve / reject gate ----------
 function reviewCardHTML(app) {
   const r = app.review_json || {};
   const posting = r.posting || {};
+  const cover = renderCoverLetter(r, app.cover_letter_ref);
   return `<h3>${esc(posting.title || "")} <small>${esc(posting.company || "")}</small></h3>` +
     `<div class="kcard-meta">${atsBadge(app.ats)}<span class="kcard-age">${esc(rel(app.created_at))}</span></div>` +
-    renderUnanswered(r) + renderDiff(r) + renderAnswers(r) +
+    (renderUnanswered(r) ? `<h4>Needs your answer (the worker refused to guess)</h4>` + renderUnanswered(r) : "") +
+    (renderDiff(r) ? `<h4>What changed vs your base resume</h4>` + renderDiff(r) : "") +
+    (cover ? `<h4>Cover letter</h4>` + cover : "") +
+    (renderAnswers(r) ? `<h4>Exact answers that will be used</h4>` + renderAnswers(r) : "") +
     (app.tailored_resume_ref
       ? `<p class="hint">Tailored resume: ${refLink(app.tailored_resume_ref)}</p>` : "") +
-    (app.cover_letter_ref
-      ? `<p class="hint">Cover letter: ${refLink(app.cover_letter_ref)}</p>` : "") +
     `<p><a href="${esc(app.url)}" target="_blank" rel="noopener">Open posting</a></p>` +
     `<div class="review-actions">` +
     `<button class="btn primary" data-approve="${app.id}">Approve</button>` +
@@ -417,7 +531,7 @@ function reviewCardHTML(app) {
 
 function emptyReviewHTML() {
   return `<div class="kempty" style="max-width:520px"><strong>All caught up</strong>` +
-    `Nothing waiting for review. New matches land in the Pipeline.</div>`;
+    `Nothing waiting for review. Prepared applications land here.</div>`;
 }
 
 async function loadReview() {
@@ -574,59 +688,179 @@ document.addEventListener("keydown", (e) => {
   else if (k === "r") { const it = reviewItems[kbIndex]; if (it) rejectApp(it.id); }
 });
 
-// ---------- tracker ----------
-function renderTrackerFilters(counts) {
-  const wrap = $("#tracker-filters");
-  const chips = ["all"].concat(STATUSES).map((s) => {
-    const label = s === "all" ? "all" : s.replace(/_/g, " ");
-    const n = s === "all"
-      ? STATUSES.reduce((t, x) => t + (counts[x] || 0), 0)
-      : (counts[s] || 0);
-    return `<button class="btn${s === trackerFilter ? " on" : ""}"` +
-      ` data-filter="${s}">${esc(label)} (${n})</button>`;
-  }).join("");
-  wrap.innerHTML = chips;
+// ---------- APPLY: ready to submit ----------
+async function loadApply() {
+  const list = $("#apply-list");
+  list.innerHTML = `<p class="hint">Loading…</p>`;
+  const { data: rows, error } = await sb.from("applications")
+    .select("id,url,ats,status,receipt_json,updated_at,postings(company,title,location)")
+    .eq("candidate_id", candidateId)
+    .in("status", ["ready_to_submit", "manual", "needs_otp"])
+    .order("updated_at", { ascending: false })
+    .limit(200);
+  if (error) {
+    list.innerHTML = `<p class="hint">Could not load: ${esc(error.message)}</p>`;
+    return;
+  }
+  if (!rows || !rows.length) {
+    list.innerHTML = `<div class="kempty"><strong>Nothing ready to submit</strong>Approved applications land here. Open the posting, submit on the ATS site, then mark it submitted with the receipt.</div>`;
+    return;
+  }
+  list.innerHTML = "";
+  rows.forEach((a) => {
+    const p = a.postings || {};
+    const hasReceipt = a.receipt_json && Object.keys(a.receipt_json).length;
+    const wrap = document.createElement("div");
+    wrap.innerHTML =
+      `<div class="kcard" data-app-id="${a.id}">` +
+      `<div class="kcard-top"><span class="kcard-company">${esc(p.company || "")}</span>${atsBadge(a.ats)}</div>` +
+      `<p class="kcard-title">${esc(p.title || "")}</p>` +
+      `<div class="kcard-loc">${esc(p.location || "")}</div>` +
+      `<div class="apply-meta">${statusPill(a.status)}<span class="kcard-age">${esc(rel(a.updated_at))}</span></div>` +
+      (hasReceipt ? `<p class="hint">Receipt on file.</p>` : "") +
+      `<div class="kcard-actions"><a class="btn" href="${esc(a.url)}" target="_blank" rel="noopener">Open posting</a>` +
+      `<button class="btn primary" data-mark-submitted="${a.id}">Mark submitted</button></div>` +
+      `</div>`;
+    list.appendChild(wrap.firstChild);
+  });
 }
 
-document.addEventListener("click", async (e) => {
-  const f = e.target.dataset && e.target.dataset.filter;
-  if (!f) return;
-  trackerFilter = f;
-  loadTracker();
-});
+// ---------- TRACK: application board (Tsenta-style columns) ----------
+const TCOLS = [
+  { key: "review", label: "Needs review",
+    test: (a) => a.status === "needs_review",
+    empty: "Tailored applications wait for your approval here." },
+  { key: "ready", label: "Ready to submit",
+    test: (a) => ["ready_to_submit", "manual", "needs_otp"].indexOf(a.status) !== -1,
+    empty: "Approved applications wait for your manual submit." },
+  { key: "submitted", label: "Submitted",
+    test: (a, m) => a.status === "submitted" && !m,
+    empty: "No quiet submissions — everything submitted is waiting on a reply or below." },
+  { key: "replied", label: "Replied",
+    test: (a, m) => a.status === "submitted" && (m === "confirmation" || m === "info_request"),
+    empty: "Employer confirmations and info requests land here." },
+  { key: "interview", label: "Interview",
+    test: (a, m) => m === "interview",
+    empty: "Interview invitations land here." },
+  { key: "offer", label: "Offer",
+    test: (a, m) => m === "offer",
+    empty: "Offers land here." },
+  { key: "closed", label: "Closed",
+    test: (a, m) => a.status === "failed" || m === "rejection",
+    empty: "Rejected or failed applications land here." },
+];
 
-async function loadTracker() {
-  const tb = $("#tracker-table tbody");
-  tb.innerHTML = `<tr><td colspan="6">Loading…</td></tr>`;
-  let q = sb.from("applications")
-    .select("id,url,ats,status,receipt_json,tailored_resume_ref,updated_at,postings(company,title,location)")
+function trackCard(a, replyByApp) {
+  const p = a.postings || {};
+  const reply = replyByApp[a.id];
+  return `<div class="kcard" data-app-id="${a.id}">` +
+    `<div class="kcard-top"><span class="kcard-company">${esc(p.company || "")}</span>${atsBadge(a.ats)}</div>` +
+    `<p class="kcard-title">${esc(p.title || "")}</p>` +
+    `<div class="kcard-meta">${reply ? replyChip(reply) : statusPill(a.status)}` +
+    `<span class="kcard-age">${esc(rel(a.updated_at))}</span></div>` +
+    `</div>`;
+}
+
+async function loadTrack() {
+  const board = $("#track-board");
+  board.innerHTML = `<p class="hint">Loading tracker…</p>`;
+  const { data: rows, error } = await sb.from("applications")
+    .select("id,url,ats,status,updated_at,postings(company,title,location)")
     .eq("candidate_id", candidateId)
     .order("updated_at", { ascending: false })
     .limit(500);
-  if (trackerFilter !== "all") q = q.eq("status", trackerFilter);
-  const { data: rows, error } = await q;
   if (error) {
-    tb.innerHTML = `<tr><td colspan="6">Could not load tracker: ${esc(error.message)}</td></tr>`;
+    board.innerHTML = `<p class="hint">Could not load tracker: ${esc(error.message)}</p>`;
     return;
   }
-  // counts for the filter chips (one extra cheap query over statuses)
-  const { data: allRows } = await sb.from("applications")
-    .select("status").eq("candidate_id", candidateId).limit(2000);
-  const counts = {};
-  (allRows || []).forEach((a) => { counts[a.status] = (counts[a.status] || 0) + 1; });
-  renderTrackerFilters(counts);
-  const { map: replyByApp } = await loadReplyMap((rows || []).map((a) => a.id));
-  tb.innerHTML = (rows || []).map((a) => {
+  const apps = rows || [];
+  const { map: replyByApp } = await loadReplyMap(apps.map((a) => a.id));
+  if (!apps.length) {
+    board.innerHTML = `<div class="kempty"><strong>No applications yet</strong>Prepare a match from Discovery to start your pipeline.</div>`;
+    return;
+  }
+  const placed = new Set();
+  board.innerHTML = TCOLS.map((col) => {
+    const inCol = apps.filter((a) => !placed.has(a.id) && col.test(a, replyByApp[a.id]));
+    inCol.forEach((a) => placed.add(a.id));
+    const cards = inCol.map((a) => trackCard(a, replyByApp)).join("") ||
+      `<div class="kempty"><strong>Empty</strong>${esc(col.empty)}</div>`;
+    return `<div class="kcol"><div class="kcol-head"><span>${esc(col.label)}</span>` +
+      `<span class="kcol-count">${inCol.length}</span></div>` +
+      `<div class="kcol-body">${cards}</div></div>`;
+  }).join("");
+}
+
+// ---------- ACTIVITY: recent events feed ----------
+async function loadActivity() {
+  const feed = $("#activity-feed");
+  feed.innerHTML = `<p class="hint">Loading activity…</p>`;
+
+  const { data: apps } = await sb.from("applications")
+    .select("id,postings(company,title)")
+    .eq("candidate_id", candidateId)
+    .limit(2000);
+  const appIds = (apps || []).map((a) => a.id);
+  const titleOf = {};
+  (apps || []).forEach((a) => {
     const p = a.postings || {};
-    const canMark = (a.status === "ready_to_submit" || a.status === "manual");
-    return `<tr><td><strong>${esc(p.company || "")}</strong></td><td>${esc(p.title || "")}</td>` +
-      `<td>${statusPill(a.status)}</td>` +
-      `<td>${replyChip(replyByApp[a.id])}</td>` +
-      `<td>${day(a.updated_at)}</td>` +
-      `<td><div class="row-actions"><button class="btn" data-detail="${a.id}">Detail</button>` +
-      (canMark ? `<button class="btn primary" data-mark-submitted="${a.id}">Mark submitted</button>` : "") +
-      `</div></td></tr>`;
-  }).join("") || `<tr><td colspan="6"><div class="kempty"><strong>No applications yet</strong>Prepare one from the Pipeline.</div></td></tr>`;
+    titleOf[a.id] = [p.company, p.title].filter(Boolean).join(" — ") || "application";
+  });
+  if (!appIds.length) {
+    feed.innerHTML = `<div class="kempty"><strong>No activity yet</strong>Prepare a match from Discovery and the feed will fill in.</div>`;
+    return;
+  }
+
+  const { data: events } = await sb.from("application_events")
+    .select("application_id,type,payload_json,at")
+    .in("application_id", appIds)
+    .order("at", { ascending: false })
+    .limit(200);
+  const { data: msgs } = await sb.from("inbound_messages")
+    .select("application_id,from_addr,subject,classification,at")
+    .eq("candidate_id", candidateId)
+    .order("at", { ascending: false })
+    .limit(100);
+
+  const items = [];
+  (events || []).forEach((ev) => {
+    const who = titleOf[ev.application_id] || "application";
+    let text, dot = "";
+    if (STATUSES.indexOf(ev.type) !== -1) {
+      text = `<strong>${esc(who)}</strong> moved to <strong>${esc(ev.type.replace(/_/g, " "))}</strong>`;
+      dot = ev.type === "failed" ? "bad" : (ev.type === "submitted" ? "good" : "");
+    } else if (ev.type === "note") {
+      text = `<strong>${esc(who)}</strong> — ${esc((ev.payload_json || {}).note || "note")}`;
+    } else {
+      text = `<strong>${esc(who)}</strong> — ${esc(ev.type)}`;
+    }
+    items.push({ at: ev.at, text: text, sub: rel(ev.at), appId: ev.application_id, dot: dot });
+  });
+  (msgs || []).forEach((m) => {
+    const who = m.application_id ? (titleOf[m.application_id] || "application") : "application";
+    const c = m.classification || "mail";
+    const dot = (c === "interview" || c === "offer") ? "good"
+      : (c === "rejection" ? "bad" : "mail");
+    items.push({
+      at: m.at,
+      text: `Recruiter mail · ${replyChip(c)} <strong>${esc(m.subject || "(no subject)")}</strong> — ${esc(who)}`,
+      sub: `${esc(m.from_addr || "")} · ${rel(m.at)}`,
+      appId: m.application_id,
+      dot: dot,
+    });
+  });
+  items.sort((a, b) => new Date(b.at) - new Date(a.at));
+  if (!items.length) {
+    feed.innerHTML = `<div class="kempty"><strong>No activity yet</strong>Status changes and recruiter mail will appear here.</div>`;
+    return;
+  }
+  feed.innerHTML = items.slice(0, 120).map((it) =>
+    `<div class="activity-item"><span class="activity-dot ${it.dot}"></span>` +
+    `<div class="activity-body"><div class="activity-text">${it.text}</div>` +
+    `<div class="activity-sub">${it.sub}</div></div>` +
+    (it.appId ? `<button class="btn" data-detail="${it.appId}">Open</button>` : "") +
+    `</div>`
+  ).join("");
 }
 
 // ---------- slide-over detail drawer ----------
@@ -644,19 +878,6 @@ function closeDrawer() {
 $("#drawer-close").addEventListener("click", closeDrawer);
 $("#scrim").addEventListener("click", closeDrawer);
 
-function openMatchDrawer(m) {
-  const p = m.postings || {};
-  showDrawer(
-    `<h3>${esc(p.company || "")} — ${esc(p.title || "")}</h3>` +
-    `<p class="hint">${esc(p.location || "")}</p>` +
-    `<div class="kcard-meta">${atsBadge(p.ats_type)}<span class="kcard-age">${esc(rel(m.created_at))}</span></div>` +
-    scoreHTML(m.score) +
-    whyHTML(m.reasons_json, true) +
-    `<p style="margin-top:14px"><a href="${esc(p.url)}" target="_blank" rel="noopener">Open posting</a></p>` +
-    `<button class="btn primary block" data-prepare="${m.id}">Prepare application</button>`
-  );
-}
-
 async function openDrawer(id) {
   showDrawer(`<p class="hint">Loading…</p>`);
   const { data: app, error } = await sb.from("applications")
@@ -670,6 +891,7 @@ async function openDrawer(id) {
     .order("at", { ascending: false });
   const p = app.postings || {};
   const r = app.review_json || {};
+  const cover = renderCoverLetter(r, app.cover_letter_ref);
   showDrawer(
     `<h3>${esc(p.company || "")} — ${esc(p.title || "")}</h3>` +
     `<p>${statusPill(app.status)} ${atsBadge(app.ats)} ` +
@@ -677,12 +899,14 @@ async function openDrawer(id) {
     `<p class="hint">${esc(p.location || "")} · updated ${esc(rel(app.updated_at))}</p>` +
     (app.failure_reason ? `<p class="hint">Failure reason: ${esc(app.failure_reason)}</p>` : "") +
     `<h4>Tailored resume</h4><p>${app.tailored_resume_ref ? refLink(app.tailored_resume_ref) : "<span class=hint>none</span>"}</p>` +
-    `<h4>Cover letter</h4><p>${app.cover_letter_ref ? refLink(app.cover_letter_ref) : "<span class=hint>none</span>"}</p>` +
+    `<h4>Cover letter</h4>` + (cover || `<p><span class="hint">none</span></p>`) +
     `<h4>Receipt</h4>` +
     (app.receipt_json
       ? `<pre class="cover">${esc(JSON.stringify(app.receipt_json, null, 2))}</pre>`
       : `<p class="hint">No receipt recorded yet.</p>`) +
-    (r.diff && r.diff.length ? `<h4>Review diff</h4>` + renderDiff(r) : "") +
+    (renderDiff(r) ? `<h4>Review diff</h4>` + renderDiff(r) : "") +
+    (renderAnswers(r) ? `<h4>Exact answers</h4>` + renderAnswers(r) : "") +
+    (renderUnanswered(r) ? `<h4>Open questions</h4>` + renderUnanswered(r) : "") +
     `<h4>Recruiter mail (${(msgs || []).length})</h4>` +
     ((msgs || []).map((m) =>
       `<div class="msg">${replyChip(m.classification)} ` +
@@ -698,7 +922,7 @@ async function openDrawer(id) {
   );
 }
 
-// kanban card clicks open the drawer (buttons/links/expands keep working)
+// card clicks open the drawer (buttons/links/expands/inputs keep working)
 document.addEventListener("click", (e) => {
   const d = e.target.dataset && e.target.dataset.detail;
   if (d) { openDrawer(d); return; }

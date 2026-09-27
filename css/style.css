@@ -410,3 +410,6 @@ td.detail-cell { max-width: 320px; overflow: hidden; text-overflow: ellipsis; wh
   .match-list { grid-template-columns: 1fr; }
   .filters { gap: 10px 14px; }
 }
+
+/* ---------- pull-jobs ---------- */
+.view-tools { display: flex; align-items: center; gap: 14px; }

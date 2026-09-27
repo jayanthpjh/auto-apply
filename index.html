@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>auto-apply — pipeline</title>
+<title>auto-apply — find, prep, apply, track</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
@@ -30,17 +30,29 @@
   <aside id="sidebar">
     <div class="brand"><span class="brand-mark">a/</span><span class="brand-name">auto-apply</span></div>
     <nav id="tabs">
-      <button data-view="pipeline" class="active">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2 2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>
-        Pipeline
+      <button data-view="discovery" class="active">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>
+        Discovery
+      </button>
+      <button data-view="prep">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>
+        Prep
       </button>
       <button data-view="review">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M8 12l3 3 5-6"/></svg>
         Review <span id="review-count" class="badge"></span>
       </button>
-      <button data-view="tracker">
+      <button data-view="apply">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 2 11 13"/><path d="M22 2 15 22l-4-9-9-4Z"/></svg>
+        Apply
+      </button>
+      <button data-view="track">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 6h13M8 12h13M8 18h13"/><circle cx="4" cy="6" r="1" fill="currentColor"/><circle cx="4" cy="12" r="1" fill="currentColor"/><circle cx="4" cy="18" r="1" fill="currentColor"/></svg>
-        Tracker
+        Track
+      </button>
+      <button data-view="activity">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>
+        Activity
       </button>
       <button data-view="costs">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="6" y1="20" x2="6" y2="14"/><line x1="12" y1="20" x2="12" y2="8"/><line x1="18" y1="20" x2="18" y2="12"/><line x1="3" y1="20" x2="21" y2="20"/></svg>
@@ -54,22 +66,46 @@
   </aside>
 
   <main>
-    <section id="view-pipeline" class="view active">
+    <!-- FIND: match feed -->
+    <section id="view-discovery" class="view active">
       <div class="view-head">
         <div>
-          <h2>Pipeline</h2>
-          <p class="hint">Find &rarr; Prep &rarr; Apply &rarr; Track. Nothing submits without your review and approval.</p>
+          <h2>Discovery</h2>
+          <p class="hint">New roles matched to your profile. Prepare the ones worth pursuing.</p>
         </div>
       </div>
       <div id="kpi-row" class="kpis"></div>
-      <div id="kanban" class="kanban"></div>
+      <div id="discovery-filters" class="filters">
+        <label class="f-range">Min score
+          <input id="f-minscore" type="range" min="0" max="95" step="5" value="0">
+          <span id="f-minscore-val">0%</span>
+        </label>
+        <label class="f-text">Location
+          <input id="f-location" type="text" placeholder="e.g. Remote, Columbus" autocomplete="off">
+        </label>
+        <label class="f-check"><input id="f-remote" type="checkbox"> Remote only</label>
+        <span id="f-count" class="hint"></span>
+      </div>
+      <div id="match-list" class="match-list"></div>
     </section>
 
+    <!-- PREP: per-role tailoring, step by step -->
+    <section id="view-prep" class="view">
+      <div class="view-head">
+        <div>
+          <h2>Prep</h2>
+          <p class="hint">Tailored materials per role — resume diff, cover letter, answers. Walk each one step by step before it reaches review.</p>
+        </div>
+      </div>
+      <div id="prep-list"></div>
+    </section>
+
+    <!-- REVIEW: approve / reject gate -->
     <section id="view-review" class="view">
       <div class="view-head">
         <div>
           <h2>Review</h2>
-          <p class="hint">Approve moves the application to <strong>ready_to_submit</strong> (you submit on the ATS site yourself); Reject closes it.</p>
+          <p class="hint">Approve moves the application to <strong>ready_to_submit</strong> (you submit on the ATS site yourself); Reject closes it. Nothing submits without your approval.</p>
         </div>
         <div class="review-tools">
           <div class="kbd-hints" title="Keyboard shortcuts">
@@ -83,21 +119,43 @@
       <div id="review-list"></div>
     </section>
 
-    <section id="view-tracker" class="view">
+    <!-- APPLY: ready to submit -->
+    <section id="view-apply" class="view">
       <div class="view-head">
         <div>
-          <h2>Tracker</h2>
-          <p class="hint">Every application and its current status. Open a detail for the receipt, tailored resume, recruiter mail, and the full event timeline.</p>
+          <h2>Apply</h2>
+          <p class="hint">Approved and ready. You submit on the ATS site — then record the receipt here.</p>
         </div>
       </div>
-      <div id="tracker-filters" class="chips"></div>
-      <div class="table-wrap">
-      <table id="tracker-table"><thead><tr>
-        <th>Company</th><th>Title</th><th>Status</th><th>Reply</th><th>Updated</th><th></th>
-      </tr></thead><tbody></tbody></table>
+      <div class="panel note">
+        <p><strong>How submitting works:</strong> the fill-only browser extension fills the ATS form from your answer pack. You review it and hit submit on the site yourself. This dashboard never submits anything.</p>
       </div>
+      <div id="apply-list" class="match-list"></div>
     </section>
 
+    <!-- TRACK: application board -->
+    <section id="view-track" class="view">
+      <div class="view-head">
+        <div>
+          <h2>Track</h2>
+          <p class="hint">Every application by stage. Recruiter replies route to the right card automatically. Open one for the receipt, tailored materials, recruiter mail, and the full timeline.</p>
+        </div>
+      </div>
+      <div id="track-board" class="kanban"></div>
+    </section>
+
+    <!-- ACTIVITY: recent events feed -->
+    <section id="view-activity" class="view">
+      <div class="view-head">
+        <div>
+          <h2>Activity</h2>
+          <p class="hint">Status changes, new matches, and recruiter replies — newest first.</p>
+        </div>
+      </div>
+      <div id="activity-feed" class="activity-feed"></div>
+    </section>
+
+    <!-- COSTS -->
     <section id="view-costs" class="view">
       <div class="view-head">
         <div>
@@ -130,7 +188,7 @@
 <div id="scrim" class="hidden"></div>
 <aside id="drawer" aria-label="Application detail">
   <div class="drawer-head">
-    <span class="drawer-title">Application detail</span>
+    <span class="drawer-title">Detail</span>
     <button id="drawer-close" class="btn ghost" aria-label="Close">✕</button>
   </div>
   <div id="drawer-content"></div>

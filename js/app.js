@@ -382,7 +382,7 @@ async function loadDiscovery() {
 // The dashboard inserts a pull_requests row (RLS: requested_by = auth.uid()).
 // The pull_worker cron (service role) picks it up and runs the pull.
 const PULL_ACTOR_ID = "Dn2KJLnaNC5vFGkEw"; // fantastic-jobs/career-site-job-listing-feed
-const PULL_MAX_ITEMS = 150;
+const PULL_MAX_ITEMS = 200;
 const PULL_USD_PER_ITEM = 0.003;
 let pullTimer = null;
 

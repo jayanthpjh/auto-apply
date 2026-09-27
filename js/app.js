@@ -712,7 +712,7 @@ async function approveApp(id) {
   }
   await logEvent(id, "note", { note: "approved by Jayanth" });
   removeReviewItem(id);
-  toast("Approved — ready for you to submit on the ATS site", "ok");
+  toast("Approved — the worker submits it on its next run", "ok");
 }
 
 async function rejectApp(id) {
@@ -812,7 +812,7 @@ async function loadApply() {
     return;
   }
   if (!rows || !rows.length) {
-    list.innerHTML = `<div class="kempty"><strong>Nothing ready to submit</strong>Approved applications land here. Open the posting, submit on the ATS site, then mark it submitted with the receipt.</div>`;
+    list.innerHTML = `<div class="kempty"><strong>Nothing ready to submit</strong>Approved applications land here. The worker submits them automatically and records the receipt. If you submit one yourself, use Mark submitted on its card to record the receipt.</div>`;
     return;
   }
   list.innerHTML = "";
@@ -841,7 +841,7 @@ const TCOLS = [
     empty: "Tailored applications wait for your approval here." },
   { key: "ready", label: "Ready to submit",
     test: (a) => ["ready_to_submit", "manual", "needs_otp"].indexOf(a.status) !== -1,
-    empty: "Approved applications wait for your manual submit." },
+    empty: "Approved applications wait for the worker's submit run." },
   { key: "submitted", label: "Submitted",
     test: (a, m) => a.status === "submitted" && !m,
     empty: "No quiet submissions — everything submitted is waiting on a reply or below." },

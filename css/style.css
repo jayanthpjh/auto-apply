@@ -1,0 +1,76 @@
+* { box-sizing: border-box; }
+body { font-family: system-ui, -apple-system, sans-serif; margin: 0; color: #1a1a1a; background: #fafafa; }
+header { background: #111; color: #fff; padding: 12px 20px; position: sticky; top: 0; }
+header h1 { margin: 0 0 8px; font-size: 20px; }
+nav button { background: #222; color: #ddd; border: 1px solid #444; padding: 8px 14px;
+  margin-right: 6px; cursor: pointer; border-radius: 6px; font-size: 14px; }
+nav button.active { background: #fff; color: #111; }
+.badge { background: #c0392b; color: #fff; border-radius: 10px; padding: 1px 7px; font-size: 12px; }
+main { padding: 20px; max-width: 1200px; margin: 0 auto; }
+.view { display: none; }
+.view.active { display: block; }
+.hint { color: #555; font-size: 14px; }
+table { width: 100%; border-collapse: collapse; background: #fff; margin-top: 10px; }
+th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid #eee; font-size: 14px; }
+th { background: #f0f0f0; }
+button.action { padding: 6px 12px; border-radius: 6px; border: 1px solid #999;
+  background: #fff; cursor: pointer; font-size: 13px; }
+button.action.primary { background: #111; color: #fff; border-color: #111; }
+button.action.danger { border-color: #c0392b; color: #c0392b; }
+.review-card { background: #fff; border: 1px solid #ddd; border-radius: 8px;
+  padding: 16px; margin-bottom: 16px; }
+.diff-old { background: #fdecea; padding: 6px 10px; border-radius: 4px; margin: 4px 0;
+  font-size: 14px; }
+.diff-new { background: #e8f5e9; padding: 6px 10px; border-radius: 4px; margin: 4px 0 12px;
+  font-size: 14px; }
+.diff-old::before { content: "- "; color: #c0392b; font-weight: bold; }
+.diff-new::before { content: "+ "; color: #2e7d32; font-weight: bold; }
+pre.cover { white-space: pre-wrap; background: #f7f7f7; padding: 12px; border-radius: 6px;
+  font-size: 14px; }
+.unanswered { background: #fff3cd; border: 1px solid #e6c200; border-radius: 6px;
+  padding: 10px 14px; margin: 8px 0; font-size: 14px; }
+.modal { position: fixed; inset: 0; background: rgba(0,0,0,.5); display: flex;
+  align-items: center; justify-content: center; }
+.modal.hidden { display: none; }
+.modal-body { background: #fff; max-width: 800px; width: 90%; max-height: 85vh;
+  overflow: auto; padding: 20px; border-radius: 10px; }
+.status { display: inline-block; padding: 2px 10px; border-radius: 12px; font-size: 12px;
+  background: #eef; }
+.status.submitted { background: #e8f5e9; }
+.status.failed, .status.manual { background: #fdecea; }
+.status.needs_review, .status.needs_otp, .status.ready_to_submit { background: #fff3cd; }
+.status.queued, .status.running { background: #e3f2fd; }
+
+/* ---------- dashboard additions (phase 5) ---------- */
+.hidden { display: none !important; }
+.header-row { display: flex; justify-content: space-between; align-items: center; }
+#auth-area { font-size: 13px; color: #ddd; }
+#auth-area .navbtn { background: #222; color: #ddd; border: 1px solid #444;
+  padding: 6px 12px; margin-left: 10px; cursor: pointer; border-radius: 6px; font-size: 13px; }
+.auth-box { max-width: 420px; background: #fff; border: 1px solid #ddd;
+  border-radius: 8px; padding: 24px; margin: 40px auto; }
+.auth-box input { width: 100%; padding: 8px 10px; font-size: 14px;
+  border: 1px solid #ccc; border-radius: 6px; }
+.error { color: #c0392b; font-size: 14px; }
+#tracker-filters { margin: 10px 0; }
+#tracker-filters button { margin: 0 6px 6px 0; }
+.diff-section { font-weight: bold; font-size: 13px; color: #555; margin: 10px 0 4px; }
+table.answers td.ans-key { font-weight: bold; white-space: nowrap; width: 30%; }
+.msg { background: #f7f7f7; border: 1px solid #eee; border-radius: 6px;
+  padding: 8px 12px; margin: 8px 0; font-size: 14px; }
+.timeline .event { border-left: 3px solid #ddd; padding: 6px 12px; margin: 8px 0; }
+.event-type { font-weight: bold; font-size: 13px; }
+.cards { display: flex; flex-wrap: wrap; gap: 12px; margin: 10px 0; }
+.card { background: #fff; border: 1px solid #ddd; border-radius: 8px;
+  padding: 14px 18px; min-width: 200px; }
+.card-label { font-size: 12px; color: #555; }
+.card-value { font-size: 24px; font-weight: bold; margin-top: 4px; }
+.panel { background: #fff; border: 1px solid #ddd; border-radius: 8px;
+  padding: 16px; margin: 10px 0; font-size: 14px; }
+.panel.placeholder { background: #fafafa; border-style: dashed; }
+.burn { position: relative; height: 28px; background: #eee; border-radius: 6px;
+  margin: 12px 0; overflow: hidden; }
+.burn-fill { position: absolute; left: 0; top: 0; bottom: 0; background: #111; }
+.burn-marker { position: absolute; top: 0; bottom: 0; width: 2px; background: #c0392b; }
+td.detail-cell { max-width: 320px; overflow: hidden; text-overflow: ellipsis;
+  white-space: nowrap; font-size: 12px; color: #555; }
